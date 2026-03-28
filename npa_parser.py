@@ -180,13 +180,14 @@ def process_file(filepath, use_gemini=False, progress_callback=None):
         result_elements.insert(0, {"type": "text", "content": " ".join(title_lines)})
 
     # Обработка статей через Gemini (в многопоточном режиме)
+    stats = {"processed": 0, "errors": 0, "total": 0}
     if use_gemini:
         articles_to_process = [elem for elem in result_elements if elem["type"] == "article"]
-        total_articles = len(articles_to_process)
+        stats["total"] = len(articles_to_process)
         processed_count = 0
         
         if progress_callback:
-            progress_callback(f"Начинаем обработку {total_articles} статей через Gemini...")
+            progress_callback(f"Начинаем обработку {stats['total']} статей через Gemini...")
 
         def process_single_article(elem):
             full_text = elem["title"] + "\n" + elem["text"]
@@ -195,6 +196,7 @@ def process_file(filepath, use_gemini=False, progress_callback=None):
                 elem["summary"] = summary
             except Exception as e:
                 elem["summary"] = f"[Ошибка суммаризации: {str(e)}]"
+                elem["has_error"] = True
             return elem
 
         # Для платного API можно поставить 10-20 потоков. Уменьшил до 5 для большей стабильности
@@ -208,8 +210,14 @@ def process_file(filepath, use_gemini=False, progress_callback=None):
                 
             for future in as_completed(futures):
                 processed_count += 1
+                result_elem = future.result()
+                if result_elem.get("has_error"):
+                    stats["errors"] += 1
+                else:
+                    stats["processed"] += 1
+                    
                 if progress_callback:
-                    progress_callback(f"Обработано {processed_count} из {total_articles} статей...")
+                    progress_callback(f"Обработано {processed_count} из {stats['total']} статей (Ошибок: {stats['errors']})...")
 
     # Сборка финального текста
     result_lines = []
@@ -245,7 +253,7 @@ def process_file(filepath, use_gemini=False, progress_callback=None):
         final_text = "\n".join(result_lines).strip()
         f.write(final_text + "\n")
     
-    return out_filepath
+    return out_filepath, stats
 
 class NpaParserApp:
     def __init__(self, root):
@@ -305,20 +313,25 @@ class NpaParserApp:
 
     def process_in_thread(self, filepath):
         try:
-            out_file = process_file(
+            out_file, stats = process_file(
                 filepath, 
                 use_gemini=self.use_gemini_var.get(),
                 progress_callback=lambda msg: self.root.after(0, self.update_status, msg)
             )
-            self.root.after(0, self.finish_success, out_file)
+            self.root.after(0, self.finish_success, out_file, stats)
         except Exception as e:
             self.root.after(0, self.finish_error, str(e))
 
-    def finish_success(self, out_file):
+    def finish_success(self, out_file, stats):
         self.btn.config(state=tk.NORMAL)
         self.cb_gemini.config(state=tk.NORMAL)
         self.status_label.config(text="Готово!")
-        messagebox.showinfo("Успех", f"Файл успешно обработан!\n\nРезультат сохранен в:\n{os.path.basename(out_file)}")
+        
+        msg = f"Файл успешно обработан!\n\nРезультат сохранен в:\n{os.path.basename(out_file)}"
+        if self.use_gemini_var.get():
+            msg += f"\n\nОтчет по обработке ИИ:\nВсего статей: {stats['total']}\nУспешно: {stats['processed']}\nОшибок: {stats['errors']}"
+            
+        messagebox.showinfo("Успех", msg)
 
     def finish_error(self, err_msg):
         self.btn.config(state=tk.NORMAL)
