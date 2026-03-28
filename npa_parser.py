@@ -100,9 +100,13 @@ PARSERS_MAP = {
         "module": "parsers.parser_fz_113",
         "prompt_key": "FZ_113"
     },
-    "2.PP_565 / 4.PP_663 (Римские разделы, пункты)": {
-        "module": "parsers.parser_pp",
-        "prompt_key": "PP_565_663"
+    "2.PP_565_bezRaspBol (Положение о ВВЭ)": {
+        "module": "parsers.parser_pp_565",
+        "prompt_key": "PP_565"
+    },
+    "4.PP_663_Pologenie_o_Prizyve (Положение о призыве)": {
+        "module": "parsers.parser_pp_663",
+        "prompt_key": "PP_663"
     }
 }
 
@@ -185,7 +189,7 @@ def process_file(filepath, parser_choice, use_gemini=False, progress_callback=No
                     result_lines.append("")
             
             if use_gemini:
-                if prompt_key == "PP_565_663":
+                if "PP_" in prompt_key:
                     # Для пунктов постановления пишем выжимку на той же строке
                     result_lines.append(f"{elem['title']} {elem.get('summary', '')}")
                 else:
