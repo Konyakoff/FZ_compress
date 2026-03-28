@@ -58,7 +58,7 @@ def call_gemini(text, prompt_instruction):
     
     req = urllib.request.Request(url, data=json.dumps(data).encode('utf-8'), headers={'Content-Type': 'application/json'})
     
-    max_retries = 5
+    max_retries = 10 # Увеличили количество попыток для стабильности
     for attempt in range(max_retries):
         try:
             with urllib.request.urlopen(req) as response:
@@ -67,10 +67,11 @@ def call_gemini(text, prompt_instruction):
         except urllib.error.HTTPError as e:
             if e.code == 429:
                 if attempt < max_retries - 1:
-                    time.sleep(5 * (attempt + 1))
+                    # При 429 ошибке делаем очень большую задержку, так как лимиты восстанавливаются раз в минуту
+                    time.sleep(20 * (attempt + 1))
                     continue
                 else:
-                    raise Exception("Превышен лимит запросов к API (429).")
+                    raise Exception("Превышен лимит запросов к API (429) даже после всех попыток.")
             
             error_info = e.read().decode('utf-8')
             if e.code == 404 and "gemini-3.1-pro-preview" in url:
@@ -155,11 +156,11 @@ def process_file(filepath, parser_choice, use_gemini=False, progress_callback=No
                 elem["has_error"] = True
             return elem
 
-        with ThreadPoolExecutor(max_workers=5) as executor:
+        with ThreadPoolExecutor(max_workers=1) as executor:
             futures = []
             for elem in articles_to_process:
                 futures.append(executor.submit(process_single_article, elem))
-                time.sleep(0.5)
+                time.sleep(2) # Гарантированная задержка между отправками для защиты TPM (Tokens Per Minute)
                 
             for future in as_completed(futures):
                 processed_count += 1
