@@ -63,7 +63,7 @@ def call_gemini(text, prompt_instruction):
     
     req = urllib.request.Request(url, data=json.dumps(data).encode('utf-8'), headers={'Content-Type': 'application/json'})
     
-    max_retries = 3
+    max_retries = 5
     for attempt in range(max_retries):
         try:
             with urllib.request.urlopen(req) as response:
@@ -72,7 +72,8 @@ def call_gemini(text, prompt_instruction):
         except urllib.error.HTTPError as e:
             if e.code == 429:
                 if attempt < max_retries - 1:
-                    time.sleep(2 * (attempt + 1)) # Уменьшил время ожидания для 429 ошибки
+                    # При 429 ошибке ждем дольше с каждой попыткой (экспоненциальная задержка)
+                    time.sleep(5 * (attempt + 1))
                     continue
                 else:
                     raise Exception("Превышен лимит запросов к API (429).")
@@ -196,9 +197,15 @@ def process_file(filepath, use_gemini=False, progress_callback=None):
                 elem["summary"] = f"[Ошибка суммаризации: {str(e)}]"
             return elem
 
-        # Для платного API можно поставить 10-20 потоков. Выставим 10 для баланса скорости/стабильности.
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            futures = [executor.submit(process_single_article, elem) for elem in articles_to_process]
+        # Для платного API можно поставить 10-20 потоков. Уменьшил до 5 для большей стабильности
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            # Чтобы избежать резкого спайка (когда все потоки стучатся в первую секунду),
+            # добавим небольшую задержку между отправкой заданий в пул
+            futures = []
+            for elem in articles_to_process:
+                futures.append(executor.submit(process_single_article, elem))
+                time.sleep(0.5) # полсекунды между стартами потоков
+                
             for future in as_completed(futures):
                 processed_count += 1
                 if progress_callback:
