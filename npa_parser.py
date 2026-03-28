@@ -1,12 +1,12 @@
 import tkinter as tk
-from tkinter import filedialog, messagebox
-import re
+from tkinter import filedialog, messagebox, ttk
 import os
 import json
 import threading
 import urllib.request
 import urllib.parse
 import time
+import importlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 def load_env():
@@ -20,11 +20,6 @@ def load_env():
                 if '=' in line:
                     key, value = line.split('=', 1)
                     os.environ[key.strip()] = value.strip()
-
-def clean_header(line):
-    line = re.sub(r'\s*\(в ред\..*?\)\s*$', '', line)
-    line = re.sub(r'\s*\(в ред\..*$', '', line)
-    return line.strip()
 
 def detect_encoding_and_read(filepath):
     encodings_to_try = ['utf-8-sig', 'utf-16', 'utf-8', 'windows-1251', 'cp866']
@@ -72,7 +67,6 @@ def call_gemini(text, prompt_instruction):
         except urllib.error.HTTPError as e:
             if e.code == 429:
                 if attempt < max_retries - 1:
-                    # При 429 ошибке ждем дольше с каждой попыткой (экспоненциальная задержка)
                     time.sleep(5 * (attempt + 1))
                     continue
                 else:
@@ -80,7 +74,6 @@ def call_gemini(text, prompt_instruction):
             
             error_info = e.read().decode('utf-8')
             if e.code == 404 and "gemini-3.1-pro-preview" in url:
-                # На случай если модели 3.1-pro-preview нет, падаем на 1.5-pro
                 url_fallback = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key={api_key}"
                 req_fallback = urllib.request.Request(url_fallback, data=json.dumps(data).encode('utf-8'), headers={'Content-Type': 'application/json'})
                 try:
@@ -94,8 +87,31 @@ def call_gemini(text, prompt_instruction):
     
     raise Exception("Неизвестная ошибка вызова API")
 
-def process_file(filepath, use_gemini=False, progress_callback=None):
+PARSERS_MAP = {
+    "1.St_1-35.5.FZ_53 (Разделы, Статьи)": {
+        "module": "parsers.parser_fz_53",
+        "prompt_key": "FZ_53"
+    },
+    "6.FZ_127_O_Vnesenii_Izmeneniy (Только Статьи)": {
+        "module": "parsers.parser_fz_127",
+        "prompt_key": "FZ_127"
+    },
+    "7.FZ_113_AGS (Главы, Статьи)": {
+        "module": "parsers.parser_fz_113",
+        "prompt_key": "FZ_113"
+    },
+    "2.PP_565 / 4.PP_663 (Римские разделы, пункты)": {
+        "module": "parsers.parser_pp",
+        "prompt_key": "PP_565_663"
+    }
+}
+
+def process_file(filepath, parser_choice, use_gemini=False, progress_callback=None):
     load_env()
+    
+    parser_config = PARSERS_MAP[parser_choice]
+    parser_module = importlib.import_module(parser_config["module"])
+    prompt_key = parser_config["prompt_key"]
     
     prompt_instruction = ""
     if use_gemini:
@@ -107,79 +123,15 @@ def process_file(filepath, use_gemini=False, progress_callback=None):
             raise Exception("Файл prompt.json не найден в директории скрипта!")
         with open(prompt_file, 'r', encoding='utf-8') as f:
             prompt_data = json.load(f)
-            prompt_instruction = prompt_data.get("prompt", "")
+            prompt_instruction = prompt_data.get(prompt_key, "")
+            if not prompt_instruction:
+                raise Exception(f"В prompt.json не найден промпт с ключом '{prompt_key}'!")
 
     lines = detect_encoding_and_read(filepath)
 
-    result_elements = []
-    title_lines = []
-    title_finished = False
+    # Используем выбранный модуль для парсинга структуры
+    result_elements = parser_module.parse(lines)
 
-    current_element_type = None
-    current_article_title = ""
-    current_article_text = []
-
-    def finalize_article():
-        nonlocal current_article_title, current_article_text
-        if current_article_title:
-            result_elements.append({
-                "type": "article",
-                "title": current_article_title,
-                "text": "\n".join(current_article_text)
-            })
-        current_article_title = ""
-        current_article_text = []
-
-    for line in lines:
-        stripped = line.strip().lstrip('\ufeff\u200b')
-        if not stripped:
-            continue
-            
-        if not title_finished and stripped.isupper() and stripped != "РОССИЙСКАЯ ФЕДЕРАЦИЯ":
-            title_lines.append(stripped)
-            continue
-        elif not title_finished and len(title_lines) > 0 and not stripped.isupper():
-            title_finished = True
-            result_elements.append({"type": "text", "content": " ".join(title_lines)})
-            
-        if not title_finished and not stripped.isupper():
-            pass
-
-        if stripped.startswith("Раздел ") or stripped.startswith("Глава "):
-            finalize_article()
-            
-            if not title_finished:
-                if title_lines:
-                    result_elements.append({"type": "text", "content": " ".join(title_lines)})
-                title_finished = True
-            
-            cleaned = clean_header(stripped)
-            result_elements.append({"type": "section", "content": cleaned})
-            current_element_type = "section"
-            continue
-            
-        elif stripped.startswith("Статья "):
-            finalize_article()
-            
-            if not title_finished:
-                if title_lines:
-                    result_elements.append({"type": "text", "content": " ".join(title_lines)})
-                title_finished = True
-                
-            cleaned = clean_header(stripped)
-            current_article_title = cleaned
-            current_element_type = "article"
-            continue
-            
-        if current_element_type == "article" and current_article_title:
-            current_article_text.append(stripped)
-
-    finalize_article()
-
-    if not title_finished and title_lines:
-        result_elements.insert(0, {"type": "text", "content": " ".join(title_lines)})
-
-    # Обработка статей через Gemini (в многопоточном режиме)
     stats = {"processed": 0, "errors": 0, "total": 0}
     if use_gemini:
         articles_to_process = [elem for elem in result_elements if elem["type"] == "article"]
@@ -199,14 +151,11 @@ def process_file(filepath, use_gemini=False, progress_callback=None):
                 elem["has_error"] = True
             return elem
 
-        # Для платного API можно поставить 10-20 потоков. Уменьшил до 5 для большей стабильности
         with ThreadPoolExecutor(max_workers=5) as executor:
-            # Чтобы избежать резкого спайка (когда все потоки стучатся в первую секунду),
-            # добавим небольшую задержку между отправкой заданий в пул
             futures = []
             for elem in articles_to_process:
                 futures.append(executor.submit(process_single_article, elem))
-                time.sleep(0.5) # полсекунды между стартами потоков
+                time.sleep(0.5)
                 
             for future in as_completed(futures):
                 processed_count += 1
@@ -227,20 +176,24 @@ def process_file(filepath, use_gemini=False, progress_callback=None):
             result_lines.append(elem["content"])
             result_lines.append("")
         elif elem["type"] == "section":
-            # Добавляем пустую строку перед разделом, если это не начало
             if result_lines and result_lines[-1] != "":
                 result_lines.append("")
             result_lines.append(elem["content"])
         elif elem["type"] == "article":
-            # Добавляем пустую строку перед статьей, если перед ней не раздел/глава
             if result_lines and i > 0 and result_elements[i-1]["type"] not in ["section", "text"]:
                 if result_lines[-1] != "":
                     result_lines.append("")
             
-            result_lines.append(elem["title"])
             if use_gemini:
-                result_lines.append(elem.get("summary", ""))
-            result_lines.append("")
+                if prompt_key == "PP_565_663":
+                    # Для пунктов постановления пишем выжимку на той же строке
+                    result_lines.append(f"{elem['title']} {elem.get('summary', '')}")
+                else:
+                    # Для статей пишем выжимку с новой строки
+                    result_lines.append(elem["title"])
+                    result_lines.append(elem.get("summary", ""))
+            else:
+                result_lines.append(elem["title"])
 
     base_path, ext = os.path.splitext(filepath)
     counter = 1
@@ -259,7 +212,7 @@ class NpaParserApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Парсер структуры НПА")
-        self.root.geometry("500x260")
+        self.root.geometry("550x330")
         self.root.eval('tk::PlaceWindow . center')
         self.root.configure(padx=20, pady=20)
         
@@ -268,10 +221,23 @@ class NpaParserApp:
         
         desc_label = tk.Label(
             root, 
-            text="Выберите .txt файл. Скрипт извлечет\nназвание, разделы, главы и статьи.", 
+            text="Выберите тип документа и .txt файл.\nСкрипт извлечет нужную структуру.", 
             font=("Arial", 10), justify=tk.CENTER
         )
         desc_label.pack(pady=(0, 10))
+        
+        # Выпадающий список
+        self.parser_var = tk.StringVar()
+        self.parser_combo = ttk.Combobox(
+            root, 
+            textvariable=self.parser_var,
+            values=list(PARSERS_MAP.keys()),
+            state="readonly",
+            width=50,
+            font=("Arial", 10)
+        )
+        self.parser_combo.current(0)
+        self.parser_combo.pack(pady=(0, 15))
         
         self.use_gemini_var = tk.BooleanVar(value=False)
         self.cb_gemini = tk.Checkbutton(
@@ -283,7 +249,7 @@ class NpaParserApp:
         self.cb_gemini.pack(pady=(0, 10))
         
         self.btn = tk.Button(
-            root, text="Выбрать файл", command=self.select_file, 
+            root, text="Выбрать файл и обработать", command=self.select_file, 
             font=("Arial", 12), bg="#4CAF50", fg="white",
             padx=20, pady=10, cursor="hand2"
         )
@@ -303,18 +269,22 @@ class NpaParserApp:
         if filepath:
             self.btn.config(state=tk.DISABLED)
             self.cb_gemini.config(state=tk.DISABLED)
+            self.parser_combo.config(state=tk.DISABLED)
             self.status_label.config(text="Обработка файла, пожалуйста подождите...")
             
-            t = threading.Thread(target=self.process_in_thread, args=(filepath,))
+            parser_choice = self.parser_var.get()
+            
+            t = threading.Thread(target=self.process_in_thread, args=(filepath, parser_choice))
             t.start()
 
     def update_status(self, text):
         self.status_label.config(text=text)
 
-    def process_in_thread(self, filepath):
+    def process_in_thread(self, filepath, parser_choice):
         try:
             out_file, stats = process_file(
-                filepath, 
+                filepath,
+                parser_choice,
                 use_gemini=self.use_gemini_var.get(),
                 progress_callback=lambda msg: self.root.after(0, self.update_status, msg)
             )
@@ -325,17 +295,19 @@ class NpaParserApp:
     def finish_success(self, out_file, stats):
         self.btn.config(state=tk.NORMAL)
         self.cb_gemini.config(state=tk.NORMAL)
+        self.parser_combo.config(state="readonly")
         self.status_label.config(text="Готово!")
         
         msg = f"Файл успешно обработан!\n\nРезультат сохранен в:\n{os.path.basename(out_file)}"
         if self.use_gemini_var.get():
-            msg += f"\n\nОтчет по обработке ИИ:\nВсего статей: {stats['total']}\nУспешно: {stats['processed']}\nОшибок: {stats['errors']}"
+            msg += f"\n\nОтчет по обработке ИИ:\nВсего: {stats['total']}\nУспешно: {stats['processed']}\nОшибок: {stats['errors']}"
             
         messagebox.showinfo("Успех", msg)
 
     def finish_error(self, err_msg):
         self.btn.config(state=tk.NORMAL)
         self.cb_gemini.config(state=tk.NORMAL)
+        self.parser_combo.config(state="readonly")
         self.status_label.config(text="Ошибка!")
         import traceback
         traceback.print_exc()
