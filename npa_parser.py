@@ -39,12 +39,12 @@ def detect_encoding_and_read(filepath):
         pass
     raise Exception("Не удалось определить кодировку файла или прочитать его.")
 
-def call_gemini(text, prompt_instruction):
+def call_gemini(text, prompt_instruction, model_name="gemini-3.0-pro"):
     api_key = os.environ.get("GEMINI_API_KEY", "")
     if not api_key:
         raise Exception("API ключ не найден.")
         
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent?key={api_key}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
     
     data = {
         "systemInstruction": {
@@ -74,7 +74,7 @@ def call_gemini(text, prompt_instruction):
                     raise Exception("Превышен лимит запросов к API (429) даже после всех попыток.")
             
             error_info = e.read().decode('utf-8')
-            if e.code == 404 and "gemini-3.1-pro-preview" in url:
+            if e.code == 404:
                 url_fallback = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key={api_key}"
                 req_fallback = urllib.request.Request(url_fallback, data=json.dumps(data).encode('utf-8'), headers={'Content-Type': 'application/json'})
                 try:
@@ -111,7 +111,7 @@ PARSERS_MAP = {
     }
 }
 
-def process_file(filepath, parser_choice, use_gemini=False, progress_callback=None):
+def process_file(filepath, parser_choice, use_gemini=False, model_name="gemini-3.0-pro", progress_callback=None):
     load_env()
     
     parser_config = PARSERS_MAP[parser_choice]
@@ -149,7 +149,7 @@ def process_file(filepath, parser_choice, use_gemini=False, progress_callback=No
         def process_single_article(elem):
             full_text = elem["title"] + "\n" + elem["text"]
             try:
-                summary = call_gemini(full_text, prompt_instruction)
+                summary = call_gemini(full_text, prompt_instruction, model_name)
                 elem["summary"] = summary
             except Exception as e:
                 elem["summary"] = f"[Ошибка суммаризации: {str(e)}]"
@@ -217,10 +217,22 @@ class NpaParserApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Парсер структуры НПА")
-        self.root.geometry("550x330")
+        self.root.geometry("550x400")
         self.root.eval('tk::PlaceWindow . center')
         self.root.configure(padx=20, pady=20)
         
+        # Загрузка моделей
+        self.models_map = {}
+        models_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models.json')
+        if os.path.exists(models_file):
+            try:
+                with open(models_file, 'r', encoding='utf-8') as f:
+                    self.models_map = json.load(f)
+            except:
+                self.models_map = {"Gemini 3.0 Pro": "gemini-3.0-pro"}
+        else:
+            self.models_map = {"Gemini 3.0 Pro": "gemini-3.0-pro"}
+            
         title_label = tk.Label(root, text="Извлечение структуры НПА", font=("Arial", 14, "bold"))
         title_label.pack(pady=(0, 10))
         
@@ -249,9 +261,32 @@ class NpaParserApp:
             root, 
             text="Использовать ИИ (Gemini) для выжимки статей", 
             variable=self.use_gemini_var,
+            command=self.toggle_model_combo,
             font=("Arial", 10)
         )
         self.cb_gemini.pack(pady=(0, 10))
+        
+        # Выпадающий список моделей
+        model_frame = tk.Frame(root)
+        model_frame.pack(pady=(0, 15))
+        
+        tk.Label(model_frame, text="Модель ИИ:", font=("Arial", 10)).pack(side=tk.LEFT, padx=(0, 5))
+        
+        self.model_var = tk.StringVar()
+        self.model_combo = ttk.Combobox(
+            model_frame, 
+            textvariable=self.model_var,
+            values=list(self.models_map.keys()),
+            state="disabled",
+            width=30,
+            font=("Arial", 10)
+        )
+        # Устанавливаем по умолчанию Gemini 3.0 Pro, если есть
+        if "Gemini 3.0 Pro" in self.models_map:
+            self.model_combo.set("Gemini 3.0 Pro")
+        elif self.models_map:
+            self.model_combo.current(0)
+        self.model_combo.pack(side=tk.LEFT)
         
         self.btn = tk.Button(
             root, text="Выбрать файл и обработать", command=self.select_file, 
@@ -262,6 +297,12 @@ class NpaParserApp:
         
         self.status_label = tk.Label(root, text="", font=("Arial", 9), fg="blue")
         self.status_label.pack(pady=(10, 0))
+
+    def toggle_model_combo(self):
+        if self.use_gemini_var.get():
+            self.model_combo.config(state="readonly")
+        else:
+            self.model_combo.config(state="disabled")
 
     def select_file(self):
         initial_dir = os.path.dirname(os.path.abspath(__file__))
@@ -275,22 +316,26 @@ class NpaParserApp:
             self.btn.config(state=tk.DISABLED)
             self.cb_gemini.config(state=tk.DISABLED)
             self.parser_combo.config(state=tk.DISABLED)
+            self.model_combo.config(state=tk.DISABLED)
             self.status_label.config(text="Обработка файла, пожалуйста подождите...")
             
             parser_choice = self.parser_var.get()
+            model_key = self.model_var.get()
+            model_id = self.models_map.get(model_key, "gemini-3.0-pro")
             
-            t = threading.Thread(target=self.process_in_thread, args=(filepath, parser_choice))
+            t = threading.Thread(target=self.process_in_thread, args=(filepath, parser_choice, model_id))
             t.start()
 
     def update_status(self, text):
         self.status_label.config(text=text)
 
-    def process_in_thread(self, filepath, parser_choice):
+    def process_in_thread(self, filepath, parser_choice, model_id):
         try:
             out_file, stats = process_file(
                 filepath,
                 parser_choice,
                 use_gemini=self.use_gemini_var.get(),
+                model_name=model_id,
                 progress_callback=lambda msg: self.root.after(0, self.update_status, msg)
             )
             self.root.after(0, self.finish_success, out_file, stats)
@@ -301,6 +346,10 @@ class NpaParserApp:
         self.btn.config(state=tk.NORMAL)
         self.cb_gemini.config(state=tk.NORMAL)
         self.parser_combo.config(state="readonly")
+        if self.use_gemini_var.get():
+            self.model_combo.config(state="readonly")
+        else:
+            self.model_combo.config(state="disabled")
         self.status_label.config(text="Готово!")
         
         msg = f"Файл успешно обработан!\n\nРезультат сохранен в:\n{os.path.basename(out_file)}"
@@ -313,6 +362,10 @@ class NpaParserApp:
         self.btn.config(state=tk.NORMAL)
         self.cb_gemini.config(state=tk.NORMAL)
         self.parser_combo.config(state="readonly")
+        if self.use_gemini_var.get():
+            self.model_combo.config(state="readonly")
+        else:
+            self.model_combo.config(state="disabled")
         self.status_label.config(text="Ошибка!")
         import traceback
         traceback.print_exc()
