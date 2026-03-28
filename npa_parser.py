@@ -111,7 +111,7 @@ PARSERS_MAP = {
     }
 }
 
-def process_file(filepath, parser_choice, use_gemini=False, model_name="gemini-3.0-pro", progress_callback=None):
+def process_file(filepath, parser_choice, use_gemini=False, model_name="gemini-2.5-pro", progress_callback=None):
     load_env()
     
     parser_config = PARSERS_MAP[parser_choice]
@@ -229,9 +229,9 @@ class NpaParserApp:
                 with open(models_file, 'r', encoding='utf-8') as f:
                     self.models_map = json.load(f)
             except:
-                self.models_map = {"Gemini 3.0 Pro": "gemini-3.0-pro"}
+                self.models_map = {"Gemini 2.5 Pro": "gemini-2.5-pro"}
         else:
-            self.models_map = {"Gemini 3.0 Pro": "gemini-3.0-pro"}
+            self.models_map = {"Gemini 2.5 Pro": "gemini-2.5-pro"}
             
         title_label = tk.Label(root, text="Извлечение структуры НПА", font=("Arial", 14, "bold"))
         title_label.pack(pady=(0, 10))
@@ -281,9 +281,9 @@ class NpaParserApp:
             width=30,
             font=("Arial", 10)
         )
-        # Устанавливаем по умолчанию Gemini 3.0 Pro, если есть
-        if "Gemini 3.0 Pro" in self.models_map:
-            self.model_combo.set("Gemini 3.0 Pro")
+        # Устанавливаем по умолчанию Gemini 2.5 Pro
+        if "Gemini 2.5 Pro" in self.models_map:
+            self.model_combo.set("Gemini 2.5 Pro")
         elif self.models_map:
             self.model_combo.current(0)
         self.model_combo.pack(side=tk.LEFT)
@@ -321,7 +321,7 @@ class NpaParserApp:
             
             parser_choice = self.parser_var.get()
             model_key = self.model_var.get()
-            model_id = self.models_map.get(model_key, "gemini-3.0-pro")
+            model_id = self.models_map.get(model_key, "gemini-2.5-pro")
             
             t = threading.Thread(target=self.process_in_thread, args=(filepath, parser_choice, model_id))
             t.start()

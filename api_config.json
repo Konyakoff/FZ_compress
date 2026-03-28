@@ -1,0 +1,11 @@
+{
+  "max_requests_per_minute": 300,
+  "max_tokens_per_minute": 2000000,
+  "safety_threshold_percent": 0.5,
+  "chars_per_token_estimate": 4,
+  "cooldown_sleep_seconds": 60,
+  "default_sleep_between_requests": 0.5,
+  "max_retries_on_error": 8,
+  "fallback_model": "gemini-2.5-flash",
+  "primary_model": "gemini-3.1-pro-preview"
+}
