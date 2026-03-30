@@ -14,8 +14,6 @@ def parse(lines):
     current_element_type = None
     current_article_title = ""
     current_article_text = []
-    
-    max_point_number = -1
 
     def finalize_article():
         nonlocal current_article_title, current_article_text
@@ -28,7 +26,8 @@ def parse(lines):
         current_article_title = ""
         current_article_text = []
 
-    point_regex = re.compile(r'^(\d+(?:\.\d+)*)\.(?:\s|$)')
+    # Matches numbers like "1.", "9.-19.", "1.1.", etc.
+    point_regex = re.compile(r'^([\d.-]+)\.(?:\s|$)')
 
     for line in lines:
         stripped = line.strip().lstrip('\ufeff\u200b')
@@ -68,26 +67,25 @@ def parse(lines):
             point_match = point_regex.match(stripped)
             if point_match:
                 point_num_str = point_match.group(1)
-                first_num_part = int(point_num_str.split('.')[0])
+                # extract base number, e.g. "9" from "9.-19" or "9.1"
+                base_num = re.sub(r'[^\d].*', '', point_num_str)
                 
-                if first_num_part > max_point_number:
-                    finalize_article()
-                    state = "PARSING_CONTENT"
-                    max_point_number = first_num_part
-                    point_number = point_num_str
-                    current_article_title = point_number
-                    current_element_type = "article"
-                    
-                    text_after = stripped[point_match.end():].strip()
-                    if text_after:
-                        cleaned = clean_header(text_after)
-                        current_article_text.append(cleaned)
+                # If we are already building this exact point, append to it
+                if current_article_title == base_num:
+                    cleaned = clean_header(stripped)
+                    current_article_text.append(cleaned)
                     continue
-                else:
-                    if current_element_type == "article" and current_article_title:
-                        cleaned = clean_header(stripped)
-                        current_article_text.append(cleaned)
-                    continue
+                
+                finalize_article()
+                state = "PARSING_CONTENT"
+                current_article_title = base_num
+                current_element_type = "article"
+                
+                text_after = stripped[point_match.end():].strip()
+                if text_after:
+                    cleaned = clean_header(text_after)
+                    current_article_text.append(cleaned)
+                continue
                 
             if current_element_type == "article" and current_article_title:
                 cleaned = clean_header(stripped)
