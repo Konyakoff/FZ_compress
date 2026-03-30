@@ -67,8 +67,8 @@ def call_gemini(text, prompt_instruction, model_name="gemini-3.0-pro"):
         except urllib.error.HTTPError as e:
             if e.code == 429:
                 if attempt < max_retries - 1:
-                    # При 429 ошибке делаем очень большую задержку, так как лимиты восстанавливаются раз в минуту
-                    time.sleep(20 * (attempt + 1))
+                    # При 429 ошибке делаем задержку
+                    time.sleep(retry_sleep_base * (attempt + 1))
                     continue
                 else:
                     raise Exception("Превышен лимит запросов к API (429) даже после всех попыток.")
@@ -111,7 +111,7 @@ PARSERS_MAP = {
     }
 }
 
-def process_file(filepath, parser_choice, use_gemini=False, model_name="gemini-2.5-pro", progress_callback=None):
+def process_file(filepath, parser_choice, use_gemini=False, model_name="gemini-2.5-pro", fast_mode=False, progress_callback=None):
     load_env()
     
     parser_config = PARSERS_MAP[parser_choice]
@@ -146,21 +146,35 @@ def process_file(filepath, parser_choice, use_gemini=False, model_name="gemini-2
         if progress_callback:
             progress_callback(f"Начинаем обработку {stats['total']} статей через Gemini...")
 
-        def process_single_article(elem):
+        def process_single_article(elem, retry_sleep_base):
             full_text = elem["title"] + "\n" + elem["text"]
             try:
-                summary = call_gemini(full_text, prompt_instruction, model_name)
+                summary = call_gemini(full_text, prompt_instruction, model_name, retry_sleep_base)
                 elem["summary"] = summary
             except Exception as e:
                 elem["summary"] = f"[Ошибка суммаризации: {str(e)}]"
                 elem["has_error"] = True
             return elem
 
-        with ThreadPoolExecutor(max_workers=1) as executor:
+        # Настройки скорости и лимитов
+        if fast_mode and model_name == "gemini-2.5-pro":
+            # Быстрый режим для Gemini 2.5 Pro (Tier 1):
+            # Лимит: 150-300 RPM, 1M TPM
+            # Берем 60-70% мощности для безопасности
+            max_workers = 5
+            sleep_between_requests = 0.2
+            rate_limit_retry_sleep_base = 5
+        else:
+            # Обычный режим (или для других моделей, например 3.1 Pro с жестким лимитом RPD/TPM)
+            max_workers = 1
+            sleep_between_requests = 2
+            rate_limit_retry_sleep_base = 20
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = []
             for elem in articles_to_process:
-                futures.append(executor.submit(process_single_article, elem))
-                time.sleep(2) # Гарантированная задержка между отправками для защиты TPM (Tokens Per Minute)
+                futures.append(executor.submit(process_single_article, elem, rate_limit_retry_sleep_base))
+                time.sleep(sleep_between_requests)
                 
             for future in as_completed(futures):
                 processed_count += 1
@@ -261,10 +275,20 @@ class NpaParserApp:
             root, 
             text="Использовать ИИ (Gemini) для выжимки статей", 
             variable=self.use_gemini_var,
-            command=self.toggle_model_combo,
+            command=self.toggle_ai_options,
             font=("Arial", 10)
         )
-        self.cb_gemini.pack(pady=(0, 10))
+        self.cb_gemini.pack(pady=(0, 5))
+        
+        self.fast_mode_var = tk.BooleanVar(value=False)
+        self.cb_fast_mode = tk.Checkbutton(
+            root, 
+            text="Быстрый API 2.5 pro (многопоточность)", 
+            variable=self.fast_mode_var,
+            state="disabled",
+            font=("Arial", 9)
+        )
+        self.cb_fast_mode.pack(pady=(0, 10))
         
         # Выпадающий список моделей
         model_frame = tk.Frame(root)
@@ -298,11 +322,13 @@ class NpaParserApp:
         self.status_label = tk.Label(root, text="", font=("Arial", 9), fg="blue")
         self.status_label.pack(pady=(10, 0))
 
-    def toggle_model_combo(self):
+    def toggle_ai_options(self):
         if self.use_gemini_var.get():
             self.model_combo.config(state="readonly")
+            self.cb_fast_mode.config(state="normal")
         else:
             self.model_combo.config(state="disabled")
+            self.cb_fast_mode.config(state="disabled")
 
     def select_file(self):
         initial_dir = os.path.dirname(os.path.abspath(__file__))
@@ -315,6 +341,7 @@ class NpaParserApp:
         if filepath:
             self.btn.config(state=tk.DISABLED)
             self.cb_gemini.config(state=tk.DISABLED)
+            self.cb_fast_mode.config(state=tk.DISABLED)
             self.parser_combo.config(state=tk.DISABLED)
             self.model_combo.config(state=tk.DISABLED)
             self.status_label.config(text="Обработка файла, пожалуйста подождите...")
@@ -322,20 +349,22 @@ class NpaParserApp:
             parser_choice = self.parser_var.get()
             model_key = self.model_var.get()
             model_id = self.models_map.get(model_key, "gemini-2.5-pro")
+            fast_mode = self.fast_mode_var.get()
             
-            t = threading.Thread(target=self.process_in_thread, args=(filepath, parser_choice, model_id))
+            t = threading.Thread(target=self.process_in_thread, args=(filepath, parser_choice, model_id, fast_mode))
             t.start()
 
     def update_status(self, text):
         self.status_label.config(text=text)
 
-    def process_in_thread(self, filepath, parser_choice, model_id):
+    def process_in_thread(self, filepath, parser_choice, model_id, fast_mode):
         try:
             out_file, stats = process_file(
                 filepath,
                 parser_choice,
                 use_gemini=self.use_gemini_var.get(),
                 model_name=model_id,
+                fast_mode=fast_mode,
                 progress_callback=lambda msg: self.root.after(0, self.update_status, msg)
             )
             self.root.after(0, self.finish_success, out_file, stats)
@@ -348,8 +377,10 @@ class NpaParserApp:
         self.parser_combo.config(state="readonly")
         if self.use_gemini_var.get():
             self.model_combo.config(state="readonly")
+            self.cb_fast_mode.config(state="normal")
         else:
             self.model_combo.config(state="disabled")
+            self.cb_fast_mode.config(state="disabled")
         self.status_label.config(text="Готово!")
         
         msg = f"Файл успешно обработан!\n\nРезультат сохранен в:\n{os.path.basename(out_file)}"
@@ -364,8 +395,10 @@ class NpaParserApp:
         self.parser_combo.config(state="readonly")
         if self.use_gemini_var.get():
             self.model_combo.config(state="readonly")
+            self.cb_fast_mode.config(state="normal")
         else:
             self.model_combo.config(state="disabled")
+            self.cb_fast_mode.config(state="disabled")
         self.status_label.config(text="Ошибка!")
         import traceback
         traceback.print_exc()
