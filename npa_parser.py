@@ -120,6 +120,10 @@ PARSERS_MAP = {
     "9.Glava_21_KOAP_RF (Главы, Статьи)": {
         "module": "parsers.parser_koap_21",
         "prompt_key": "Glava_21_KOAP_RF"
+    },
+    "10.Plenum_Verhov_Suda_N3 (Пункты)": {
+        "module": "parsers.parser_plenum_vs_3",
+        "prompt_key": "Plenum_Verhov_Suda_N3"
     }
 }
 
@@ -229,7 +233,7 @@ def process_file(filepath, parser_choice, use_gemini=False, model_name="gemini-2
                     result_lines.append("")
             
             if use_gemini:
-                if "PP_" in prompt_key:
+                if "PP_" in prompt_key or "Plenum" in prompt_key:
                     # Для пунктов постановления пишем выжимку на той же строке
                     result_lines.append(f"{elem['title']} {elem.get('summary', '')}")
                 else:
