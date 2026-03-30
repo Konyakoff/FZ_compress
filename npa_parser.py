@@ -113,7 +113,7 @@ PARSERS_MAP = {
         "module": "parsers.parser_pp_719",
         "prompt_key": "PP_719"
     },
-    "8. Kodeks_Adm_Sudoproizvodstva": {
+    "8. Kodeks_Adm_Sudoproizvodstva (Разделы, Главы, Статьи)": {
         "module": "parsers.parser_kodeks_adm",
         "prompt_key": "Kodeks_Adm_Sudoproizvodstva"
     }
