@@ -108,6 +108,10 @@ PARSERS_MAP = {
     "4.PP_663_Pologenie_o_Prizyve (Положение о призыве)": {
         "module": "parsers.parser_pp_663",
         "prompt_key": "PP_663"
+    },
+    "5.PP_719_Pologenie_o_VoinUchete (Воинский учет)": {
+        "module": "parsers.parser_pp_719",
+        "prompt_key": "PP_719"
     }
 }
 
