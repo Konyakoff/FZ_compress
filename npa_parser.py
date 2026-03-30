@@ -161,15 +161,28 @@ def process_file(filepath, parser_choice, use_gemini=False, model_name="gemini-2
             return elem
 
         # Настройки скорости и лимитов
-        if fast_mode and model_name == "gemini-2.5-pro":
-            # Быстрый режим для Gemini 2.5 Pro (Tier 1):
-            # Лимит: 150-300 RPM, 1M TPM
-            # Берем 60-70% мощности для безопасности
-            max_workers = 5
-            sleep_between_requests = 0.2
-            rate_limit_retry_sleep_base = 5
+        if fast_mode:
+            if model_name == "gemini-2.5-pro":
+                # Быстрый режим для Gemini 2.5 Pro (Tier 1):
+                # Лимит: 150-300 RPM, 1M TPM
+                # Берем 60-70% мощности для безопасности
+                max_workers = 5
+                sleep_between_requests = 0.2
+                rate_limit_retry_sleep_base = 5
+            elif model_name == "gemini-3.1-pro-preview":
+                # Быстрый режим для Gemini 3.1 Pro Preview (Tier 1):
+                # Лимиты для preview-модели жестче, но позволяют некоторую параллельность (около 50-100 RPM, ~500k TPM)
+                # Берем 60-70% мощности для безопасности (около 2-3 запросов в секунду)
+                max_workers = 3
+                sleep_between_requests = 0.5
+                rate_limit_retry_sleep_base = 10
+            else:
+                # Быстрый режим для остальных моделей
+                max_workers = 3
+                sleep_between_requests = 0.5
+                rate_limit_retry_sleep_base = 10
         else:
-            # Обычный режим (или для других моделей, например 3.1 Pro с жестким лимитом RPD/TPM)
+            # Обычный режим (однопоточный, самый безопасный)
             max_workers = 1
             sleep_between_requests = 2
             rate_limit_retry_sleep_base = 20
@@ -287,7 +300,7 @@ class NpaParserApp:
         self.fast_mode_var = tk.BooleanVar(value=False)
         self.cb_fast_mode = tk.Checkbutton(
             root, 
-            text="Быстрый API 2.5 pro (многопоточность)", 
+            text="Быстрый API (многопоточность 60-70%)", 
             variable=self.fast_mode_var,
             state="disabled",
             font=("Arial", 9)
