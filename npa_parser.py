@@ -39,7 +39,7 @@ def detect_encoding_and_read(filepath):
         pass
     raise Exception("Не удалось определить кодировку файла или прочитать его.")
 
-def call_gemini(text, prompt_instruction, model_name="gemini-3.0-pro"):
+def call_gemini(text, prompt_instruction, model_name="gemini-2.5-pro", retry_sleep_base=20):
     api_key = os.environ.get("GEMINI_API_KEY", "")
     if not api_key:
         raise Exception("API ключ не найден.")
