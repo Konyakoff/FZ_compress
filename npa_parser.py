@@ -116,6 +116,10 @@ PARSERS_MAP = {
     "8. Kodeks_Adm_Sudoproizvodstva (Разделы, Главы, Статьи)": {
         "module": "parsers.parser_kodeks_adm",
         "prompt_key": "Kodeks_Adm_Sudoproizvodstva"
+    },
+    "9.Glava_21_KOAP_RF (Главы, Статьи)": {
+        "module": "parsers.parser_koap_21",
+        "prompt_key": "Glava_21_KOAP_RF"
     }
 }
 
