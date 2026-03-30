@@ -50,7 +50,7 @@ def parse(lines):
             current_element_type = "section"
             continue
             
-        elif stripped.upper().startswith("СТАТЬЯ "):
+        elif re.match(r'^СТАТЬЯ\s+\d+(?:\.\d+)*\.', stripped, re.IGNORECASE):
             finalize_article()
             if not title_finished:
                 if title_lines:
