@@ -112,6 +112,10 @@ PARSERS_MAP = {
     "5.PP_719_Pologenie_o_VoinUchete (Воинский учет)": {
         "module": "parsers.parser_pp_719",
         "prompt_key": "PP_719"
+    },
+    "8. Kodeks_Adm_Sudoproizvodstva": {
+        "module": "parsers.parser_kodeks_adm",
+        "prompt_key": "Kodeks_Adm_Sudoproizvodstva"
     }
 }
 
