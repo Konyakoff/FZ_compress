@@ -124,6 +124,10 @@ PARSERS_MAP = {
     "10.Plenum_Verhov_Suda_N3 (Пункты)": {
         "module": "parsers.parser_plenum_vs_3",
         "prompt_key": "Plenum_Verhov_Suda_N3"
+    },
+    "Приложение 1 к Положению о военно-врачебной экспертизе (РаспБол)": {
+        "module": "parsers.parser_pp_565_rasp",
+        "prompt_key": "PP_565_Rasp"
     }
 }
 
